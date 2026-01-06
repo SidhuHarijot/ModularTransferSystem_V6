@@ -1,0 +1,10 @@
+{"path": "main.py", "type": "file", "language": "python", "size": 289}
+{"path": "filemaker.py", "type": "file", "language": "python", "size": 3533}
+{"path": "job_manifest.json", "type": "file", "language": "json", "size": 64256090}
+{"path": "transfer_config.json", "type": "file", "language": "json", "size": 251}
+{"path": "state_snapshot.json", "type": "file", "language": "json", "size": 319}
+{"path": "system_restore_state.json", "type": "file", "language": "json", "size": 29}
+{"path": "core/", "type": "dir"}
+{"path": "dashboard/", "type": "dir"}
+{"path": "gui/", "type": "dir"}
+{"path": "plugins/", "type": "dir"}
