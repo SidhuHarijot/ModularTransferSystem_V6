@@ -1,14 +1,11 @@
 {
-  "module": "core",
-  "purpose": "Core functionality for Modular Transfer System",
-  "config": {
-    "includes": ["filemaker.py", "transfer_config.json"],
-    "process_flow": "runtime"
-  },
-  "dependencies": [
-    "os",
-    "logging",
-    "json",
-    "time"
-  ]
+  "scope": "core",
+  "parent": "root",
+  "description": "Low-level logic and runtime interfaces for MTS V6",
+  "dependencies": ["filemaker.py", "transfer_config.json"],
+  "assumptions": ["Implements queueing, event, and task orchestration"],
+  "constraints": {
+    "execution_mode": "synchronous",
+    "thread_safety": "required"
+  }
 }

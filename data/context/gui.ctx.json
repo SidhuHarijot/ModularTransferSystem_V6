@@ -1,0 +1,11 @@
+{
+  "scope": "gui",
+  "parent": "root",
+  "description": "Graphical control and user interface for system operation",
+  "dependencies": ["dashboard", "plugins"],
+  "assumptions": ["Implements start, stop, and config management"],
+  "constraints": {
+    "ui_type": "desktop",
+    "input_methods": ["mouse", "keyboard"]
+  }
+}

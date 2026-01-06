@@ -1,0 +1,11 @@
+{
+  "scope": "dashboard",
+  "parent": "root",
+  "description": "Visualization and status monitoring for MTS V6",
+  "dependencies": ["core", "gui"],
+  "assumptions": ["Displays live job state and queue metrics"],
+  "constraints": {
+    "update_interval_sec": 2,
+    "ui_framework": "tkinter"
+  }
+}

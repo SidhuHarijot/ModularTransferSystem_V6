@@ -1,0 +1,11 @@
+{
+  "scope": "plugins",
+  "parent": "root",
+  "description": "Extensible plugin framework for modular job features",
+  "dependencies": ["core", "filemaker.py"],
+  "assumptions": ["Plugins can register actions and hooks dynamically"],
+  "constraints": {
+    "plugin_interface": "standardized",
+    "isolation_level": "threaded"
+  }
+}
