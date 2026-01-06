@@ -1,0 +1,33 @@
+import os
+from core.interfaces import IDataSource, IDataDest
+from core.smart_scanner import SmartScanner # V36 Upgrade
+
+class LocalSource(IDataSource):
+    @property
+    def display_name(self):
+        return "Local Disk / USB"
+
+    def scan_to_manifest(self, path, job_mgr, config=None):
+        path = os.path.normpath(path)
+        
+        # Initialize the Smart Scanner logic
+        scanner = SmartScanner(job_mgr)
+        
+        # Execute Scan
+        scanner.process_path(path, config)
+        
+        # Save results
+        job_mgr.save_manifest()
+
+class LocalDest(IDataDest):
+    @property
+    def display_name(self):
+        return "Local Disk / USB"
+
+    def exists(self, path):
+        return os.path.exists(path)
+
+    def ensure_dir(self, path):
+        dir_path = os.path.dirname(path)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)

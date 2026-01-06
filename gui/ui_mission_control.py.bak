@@ -1,0 +1,27 @@
+import tkinter as tk
+from tkinter import ttk
+from gui.ui_styles import BG_DARK, ACCENT
+from gui.ui_widgets import StreamWidget
+from gui.scroll_frame import ScrollableFrame
+
+class MissionControlComponent(tk.Frame):
+    def __init__(self, parent, job_mgr):
+        super().__init__(parent, bg=BG_DARK)
+        self.jm = job_mgr
+        self.slots = []
+        
+        # 1. LIVE THREAD MATRIX
+        f_strm = tk.LabelFrame(self, text=" PERFORMANCE STREAMS ", bg=BG_DARK, fg=ACCENT, font=("Consolas", 10, "bold"))
+        f_strm.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        self.scroll = ScrollableFrame(f_strm)
+        self.scroll.pack(fill="both", expand=True)
+        
+        # Initialize 8 Parallel Stream Slots (The "Dancing Bars")
+        for i in range(8):
+            slot = StreamWidget(self.scroll.scrollable_frame, i)
+            self.slots.append(slot)
+
+    def update_ui(self):
+        # This method will be called by the main loop to update the bars
+        pass

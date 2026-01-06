@@ -1,0 +1,19 @@
+import os
+import json
+import time
+
+class HtmlLiveReporter:
+    def __init__(self):
+        self.desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        self.html_path = os.path.join(self.desktop, "GeekSquad_Dashboard_V40.html")
+        self.js_path = os.path.join(self.desktop, "dashboard_data.js")
+        self._first_run = True
+
+    def update_from_state(self, state_data):
+        # The Master Cache is already formatted perfectly for JSON
+        js = f"window.updateDashboard({json.dumps(state_data)});"
+        try:
+            temp = self.js_path + ".tmp"
+            with open(temp, "w") as f: f.write(js)
+            os.replace(temp, self.js_path)
+        except: pass

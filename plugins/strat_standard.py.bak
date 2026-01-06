@@ -1,0 +1,119 @@
+import shutil
+import os
+import time
+import threading
+from core.interfaces import ITransferStrategy
+from core.auto_tuner import AutoTuner
+from core.net_client import GeekLinkClient
+
+class StandardStrategy(ITransferStrategy):
+    @property
+    def name(self):
+        return "Standard"
+
+    def execute_job(self, job_mgr, src_driver, dst_driver, callback, config=None):
+        tuner = AutoTuner(job_mgr)
+        active_threads = 0
+        active_lock = threading.Lock()
+        
+        def worker_task(batch):
+            nonlocal active_threads
+            if job_mgr.cancel_flag: 
+                with active_lock: active_threads -= 1
+                return
+
+            target_root = batch.get("dest_root", "")
+            if not target_root: target_root = job_mgr.job_data["destinations"][0]
+            
+            is_network = False
+            # Rudimentary check if target is IP-like
+            if target_root.count('.') == 3 and target_root.replace('.','').isdigit():
+                is_network = True
+
+            callback(batch["id"], "start", {"count": len(batch["files"]), "size": batch["total_size"]})
+            
+            bytes_done = 0
+            
+            for file_data in batch["files"]:
+                if job_mgr.cancel_flag: break
+                job_mgr.pause_event.wait()
+                
+                src = file_data["src"]
+                rel = file_data["rel"]
+                
+                callback("GLOBAL", "file", os.path.basename(src))
+                
+                try:
+                    if is_network:
+                        # GEEK LINK PROTOCOL
+                        client = GeekLinkClient(target_root, 5000)
+                        # We assume handshake already happened in main window
+                        # Just send file now
+                        def net_prog(chunk_len):
+                            nonlocal bytes_done
+                            bytes_done += chunk_len
+                            callback(batch["id"], "progress", {"bytes": bytes_done, "speed": chunk_len})
+                            callback("GLOBAL", "bytes", chunk_len)
+
+                        client.send_file(src, rel, net_prog)
+                        client.close()
+                            
+                    else:
+                        # LOCAL COPY
+                        dst = os.path.join(target_root, rel)
+                        dst_dir = os.path.dirname(dst)
+                        if not os.path.exists(dst_dir): os.makedirs(dst_dir, exist_ok=True)
+                        
+                        with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+                            while True:
+                                if job_mgr.cancel_flag: break
+                                job_mgr.pause_event.wait()
+                                chunk = fsrc.read(1024*1024)
+                                if not chunk: break
+                                fdst.write(chunk)
+                                
+                                size = len(chunk)
+                                bytes_done += size
+                                callback(batch["id"], "progress", {"bytes": bytes_done, "speed": size})
+                                callback("GLOBAL", "bytes", size)
+                                
+                except Exception as e: pass
+            
+            if not job_mgr.cancel_flag:
+                job_mgr.mark_batch_done(batch["id"])
+                callback(batch["id"], "done", None)
+            
+            with active_lock: active_threads -= 1
+
+        # DISPATCH LOOP
+        pending_batches = job_mgr.get_pending_batches()
+        batch_index = 0
+        total_batches = len(pending_batches)
+        last_time = time.time()
+        
+        # FIX V54.1: Initialize variable before loop
+        current_speed = 0 
+        
+        while batch_index < total_batches and not job_mgr.cancel_flag:
+            job_mgr.pause_event.wait()
+            
+            now = time.time()
+            if now - last_time >= 1.0:
+                current_speed = job_mgr.history.get("last_avg_speed", 0)
+                last_time = now
+
+            target_count = tuner.get_target_threads(current_speed)
+            callback("GLOBAL", "tuner", f"{tuner.status_msg} [{target_count}]")
+            
+            with active_lock: current_active = active_threads
+            
+            if current_active < target_count:
+                batch = pending_batches[batch_index]
+                with active_lock: active_threads += 1
+                t = threading.Thread(target=worker_task, args=(batch,), daemon=True)
+                t.start()
+                batch_index += 1
+            else:
+                time.sleep(0.05)
+        
+        while active_threads > 0: time.sleep(0.1)

@@ -1,0 +1,40 @@
+import tkinter as tk
+from tkinter import ttk
+from gui.ui_styles import BG_DARK, ACCENT
+
+class StreamWidget(tk.Frame):
+    def __init__(self, parent, index):
+        super().__init__(parent, bg=BG_DARK, pady=2)
+        self.index = index
+        self.curr_batch_id = None
+        
+        # Single Line Layout: Stream X => Progress => Speed
+        tk.Label(self, text=f"STREAM {index:02d}", font=("Consolas", 9, "bold"), 
+                 bg=BG_DARK, fg=ACCENT, width=10).pack(side="left")
+        
+        self.progress = ttk.Progressbar(self, orient="horizontal", length=300, mode="determinate")
+        self.progress.pack(side="left", padx=10, expand=True, fill="x")
+        
+        self.lbl_speed = tk.Label(self, text="0.0 MB/s", font=("Consolas", 9), 
+                                  bg=BG_DARK, fg="white", width=12)
+        self.lbl_speed.pack(side="left", padx=5)
+        
+        self.lbl_batch = tk.Label(self, text="IDLE", font=("Consolas", 8), 
+                                  bg=BG_DARK, fg="gray", width=10)
+        self.lbl_batch.pack(side="left")
+
+    def assign(self, batch_id, total_bytes):
+        self.curr_batch_id = batch_id
+        self.lbl_batch.config(text=batch_id, fg="#00ff00")
+        self.progress["maximum"] = total_bytes
+        self.progress["value"] = 0
+
+    def update_stats(self, current_bytes, speed):
+        self.progress["value"] = current_bytes
+        self.lbl_speed.config(text=f"{speed:.1f} MB/s")
+
+    def reset(self):
+        self.curr_batch_id = None
+        self.lbl_batch.config(text="IDLE", fg="gray")
+        self.progress["value"] = 0
+        self.lbl_speed.config(text="0.0 MB/s")

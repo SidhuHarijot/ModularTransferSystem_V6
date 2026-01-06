@@ -1,0 +1,11 @@
+{
+    "batch_size_mb": 500,
+    "giant_threshold_mb": 400,
+    "max_files_per_batch": 2000,
+    "lane_ratio": "1:3",
+    "starting_threads": 16,
+    "min_threads": 2,
+    "max_threads": 32,
+    "io_chunk_size_kb": 1024,
+    "auto_tune_enabled": true
+}

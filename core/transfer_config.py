@@ -1,0 +1,46 @@
+import json
+import os
+
+class TransferConfig:
+    def __init__(self):
+        self.path = "transfer_config.json"
+        self.defaults = {
+            # BATCHING PHYSICS
+            "batch_size_mb": 500,        # Target size for small file batches
+            "giant_threshold_mb": 400,   # Files bigger than this get VIP batches
+            "max_files_per_batch": 2000, # Cap file count
+            "lane_ratio": "1:3",         # Giant : Small stream ratio
+            
+            # THREADING & IO
+            "starting_threads": 8,       # Default streams on launch
+            "min_threads": 2,            # Floor for Auto-Tuner
+            "max_threads": 32,           # Ceiling for Auto-Tuner
+            "io_chunk_size_kb": 1024,    # Read/Write buffer size (1MB)
+            
+            # AUTOMATION
+            "auto_tune_enabled": False   # Future feature flag
+        }
+        self.settings = self.defaults.copy()
+        self.load()
+
+    def load(self):
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        self.settings[k] = v
+            except: pass
+            
+    def save(self):
+        try:
+            with open(self.path, 'w') as f:
+                json.dump(self.settings, f, indent=4)
+        except: pass
+
+    def get(self, key, default=None):
+        return self.settings.get(key, default if default is not None else self.defaults.get(key))
+
+    def set(self, key, val):
+        self.settings[key] = val
+        self.save()

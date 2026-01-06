@@ -1,0 +1,415 @@
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import threading
+import os
+import time
+import csv
+import webbrowser
+from core.plugin_loader import PluginManager
+from core.job_manager import JobManager
+from core.reporter import ReportGenerator
+from core.sys_config import SystemConfigManager
+from core.csv_logger import BlackBoxLogger
+from core.html_reporter import HtmlLiveReporter
+from gui.scroll_frame import ScrollableFrame
+
+# COLORS
+BG_DARK = "#121212"
+BG_PANEL = "#1E1E1E"
+ACCENT = "#39FF14" 
+TEXT_MAIN = "#FFFFFF"
+TEXT_DIM = "#AAAAAA"
+
+class StreamWidget(tk.Frame):
+    def __init__(self, parent, idx):
+        super().__init__(parent, bg=BG_PANEL, bd=1, relief="solid")
+        self.pack(side="top", fill="x", pady=2, padx=5)
+        self.lbl_title = tk.Label(self, text=f"STREAM {idx+1}", fg=ACCENT, bg=BG_PANEL, font=("Consolas", 9, "bold"))
+        self.lbl_title.pack(side="left", padx=5)
+        self.lbl_batch = tk.Label(self, text="IDLE", fg=TEXT_DIM, bg=BG_PANEL, font=("Consolas", 8), width=30, anchor="w")
+        self.lbl_batch.pack(side="left", padx=5)
+        self.pb_canvas = tk.Canvas(self, height=10, bg="#333333", highlightthickness=0)
+        self.pb_canvas.pack(side="left", fill="x", expand=True, padx=5)
+        self.pb_rect = self.pb_canvas.create_rectangle(0, 0, 0, 10, fill=ACCENT, width=0)
+        self.lbl_spd = tk.Label(self, text="-- MB/s", fg=TEXT_MAIN, bg=BG_PANEL, font=("Consolas", 9))
+        self.lbl_spd.pack(side="right", padx=5)
+        self.curr_batch_id = None
+        self.batch_total_size = 1
+    def assign(self, bid, count, size):
+        self.lbl_batch.config(text=f"Batch #{bid} [{count} files]", fg=TEXT_MAIN)
+        self.curr_batch_id = bid
+        self.batch_total_size = size
+        self.update_stats(0, 0)
+    def update_stats(self, bytes_done, speed):
+        pct = (bytes_done / self.batch_total_size)
+        w = self.pb_canvas.winfo_width()
+        self.pb_canvas.coords(self.pb_rect, 0, 0, w * pct, 10)
+        self.lbl_spd.config(text=f"{speed/1048576:.1f} MB/s")
+    def reset(self):
+        self.lbl_batch.config(text="IDLE", fg=TEXT_DIM)
+        self.pb_canvas.coords(self.pb_rect, 0, 0, 0, 10)
+        self.lbl_spd.config(text="--")
+        self.curr_batch_id = None
+
+class MainWindow:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("GEEK SQUAD OS V26 [SILKY MODE]")
+        self.root.geometry("1300x900")
+        self.root.configure(bg=BG_DARK)
+        self.style_setup()
+        
+        self.pm = PluginManager()
+        self.pm.load_all()
+        self.jm = JobManager()
+        self.reporter = ReportGenerator()
+        self.sys_mgr = SystemConfigManager(self.pm)
+        self.bb_logger = BlackBoxLogger()
+        self.live_html = HtmlLiveReporter()
+        
+        self.slot_map = {}
+        self.stream_speeds = {} 
+        self.bytes_transferred_session = 0
+        self.bytes_transferred_start = 0
+        self.total_job_bytes = 1
+        self.session_start_time = 0
+        
+        # RATE CALCULATIONS
+        self.last_calc_time = 0
+        self.last_files_count = 0
+        self.last_batches_count = 0
+        self.inst_files_sec = 0
+        self.inst_batches_sec = 0
+        
+        # LOGGING
+        self.csv_path = os.path.join(os.path.expanduser("~"), "Desktop", "Transfer_Log.csv")
+        
+        # CACHED STATE
+        self.cached_sys_state = {}
+        self._refresh_sys_cache()
+        
+        self.setup_ui()
+        if os.path.exists(self.jm.manifest_path): self.root.after(500, self.load_prev_job)
+
+    def style_setup(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("TFrame", background=BG_DARK)
+        style.configure("Dark.TFrame", background=BG_DARK)
+        style.configure("TLabelframe", background=BG_DARK, foreground=ACCENT)
+        style.configure("TLabelframe.Label", background=BG_DARK, foreground=ACCENT)
+        style.configure("TButton", background="#333333", foreground="white", borderwidth=0)
+        style.map("TButton", background=[('active', ACCENT), ('disabled', '#222222')], foreground=[('active', 'black')])
+        style.configure("TLabel", background=BG_DARK, foreground="white")
+
+    def _refresh_sys_cache(self):
+        temp = {}
+        for s in self.pm.settings:
+            temp[s.name] = s.check_state()
+        self.cached_sys_state = temp
+
+    def setup_ui(self):
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        tools = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Extra Tools", menu=tools)
+        if self.pm.tools:
+            for t in self.pm.tools: tools.add_command(label=t.name, command=lambda x=t: x.run(self.root))
+
+        f_head = tk.Frame(self.root, bg=BG_DARK)
+        f_head.pack(fill="x", padx=20, pady=10)
+        tk.Label(f_head, text="TRANSFER PROTOCOL V26", fg=ACCENT, bg=BG_DARK, font=("Impact", 20)).pack(side="left")
+        self.lbl_global_stat = tk.Label(f_head, text="SYSTEM READY", fg="white", bg=BG_DARK, font=("Consolas", 12))
+        self.lbl_global_stat.pack(side="right")
+        
+        panes = tk.PanedWindow(self.root, orient="horizontal", bg=BG_DARK, sashwidth=2)
+        panes.pack(fill="both", expand=True, padx=10, pady=5)
+        f_left = ttk.Frame(panes, width=400); panes.add(f_left)
+        
+        f_paths = ttk.LabelFrame(f_left, text=" // SOURCE & DESTINATION ")
+        f_paths.pack(fill="x", padx=5, pady=5)
+        self.src = tk.StringVar(); self.dst = tk.StringVar()
+        tk.Label(f_paths, text="SOURCE:", bg=BG_DARK, fg="gray").pack(anchor="w", padx=5)
+        e_src = tk.Entry(f_paths, textvariable=self.src, bg="#222222", fg="white", relief="flat")
+        e_src.pack(fill="x", padx=5, pady=2)
+        ttk.Button(f_paths, text="BROWSE SOURCE", command=lambda: self.browse(self.src)).pack(fill="x", padx=5, pady=2)
+        tk.Label(f_paths, text="DESTINATION:", bg=BG_DARK, fg="gray").pack(anchor="w", padx=5)
+        e_dst = tk.Entry(f_paths, textvariable=self.dst, bg="#222222", fg="white", relief="flat")
+        e_dst.pack(fill="x", padx=5, pady=2)
+        ttk.Button(f_paths, text="BROWSE DEST", command=lambda: self.browse(self.dst)).pack(fill="x", padx=5, pady=2)
+        
+        f_filters = ttk.LabelFrame(f_left, text=" // FILTERS ")
+        f_filters.pack(fill="x", padx=5, pady=10)
+        self.chk_skip_temp = tk.BooleanVar(value=True)
+        self.chk_skip_app = tk.BooleanVar(value=False)
+        self.chk_skip_win = tk.BooleanVar(value=True)
+        self.make_chk(f_filters, "Skip Temp Files", self.chk_skip_temp)
+        self.make_chk(f_filters, "Skip AppData", self.chk_skip_app)
+        self.make_chk(f_filters, "Skip Windows", self.chk_skip_win)
+        
+        f_sys = ttk.LabelFrame(f_left, text=" // SYSTEM OPTIMIZATIONS ")
+        f_sys.pack(fill="x", padx=5, pady=10)
+        self.sys_toggles = {}
+        for s in self.pm.settings:
+            var = tk.BooleanVar(value=True)
+            self.sys_toggles[s.name] = var
+            self.make_chk(f_sys, f"Enable: {s.name}", var)
+        f_sys_btns = tk.Frame(f_sys, bg=BG_DARK); f_sys_btns.pack(fill="x", pady=5)
+        self.btn_prep = tk.Button(f_sys_btns, text="⚠ APPLY", bg="#444400", fg="white", command=self.run_prep)
+        self.btn_prep.pack(side="left", fill="x", expand=True, padx=2)
+        self.btn_restore = tk.Button(f_sys_btns, text="♻ RESET", bg="#004444", fg="white", command=self.run_cleanup)
+        self.btn_restore.pack(side="left", fill="x", expand=True, padx=2)
+        
+        f_exec = ttk.LabelFrame(f_left, text=" // EXECUTION ")
+        f_exec.pack(fill="x", padx=5, pady=10)
+        self.stream_var = tk.StringVar(value="8")
+        ttk.Combobox(f_exec, textvariable=self.stream_var, values=["1", "2", "4", "8", "16"]).pack(fill="x", padx=5, pady=2)
+        self.strat_var = tk.StringVar()
+        strats = [s.name for s in self.pm.strategies]
+        if strats: self.strat_var.set(strats[0])
+        ttk.Combobox(f_exec, textvariable=self.strat_var, values=strats).pack(fill="x", padx=5, pady=2)
+        self.btn_scan = tk.Button(f_exec, text="[ SCAN ]", bg="#222222", fg="white", command=self.run_scan)
+        self.btn_scan.pack(fill="x", padx=5, pady=5)
+        self.btn_run = tk.Button(f_exec, text="▶ START", bg="#005500", fg="white", command=self.run_job, state="disabled")
+        self.btn_run.pack(fill="x", padx=5, pady=2)
+        f_sub = tk.Frame(f_exec, bg=BG_DARK); f_sub.pack(fill="x", padx=5)
+        self.btn_pause = tk.Button(f_sub, text="⏸", bg="#555500", fg="white", command=self.pause_job, state="disabled")
+        self.btn_pause.pack(side="left", fill="x", expand=True)
+        self.btn_cancel = tk.Button(f_sub, text="⏹", bg="#550000", fg="white", command=self.cancel_job, state="disabled")
+        self.btn_cancel.pack(side="left", fill="x", expand=True)
+        f_rpt = tk.Frame(f_exec, bg=BG_DARK); f_rpt.pack(fill="x", pady=5)
+        self.btn_report = tk.Button(f_rpt, text="📄 REPORT", bg="#222266", fg="white", command=self.gen_report_now, state="disabled")
+        self.btn_report.pack(side="left", fill="x", expand=True)
+        self.btn_live = tk.Button(f_rpt, text="📈 LIVE VIEW", bg="#662266", fg="white", command=self.open_live_view, state="disabled")
+        self.btn_live.pack(side="left", fill="x", expand=True)
+
+        f_right = ttk.LabelFrame(panes, text=" // LIVE DATA STREAMS ")
+        panes.add(f_right)
+        self.scroll_area = ScrollableFrame(f_right)
+        self.scroll_area.pack(fill="both", expand=True, padx=2, pady=2)
+        self.slots = []
+        self.refresh_slots(8)
+        self.pb_master = ttk.Progressbar(self.root, mode="determinate")
+        self.pb_master.pack(fill="x", side="bottom")
+
+    def make_chk(self, parent, text, var):
+        tk.Checkbutton(parent, text=text, variable=var, bg=BG_DARK, fg="white", selectcolor="#444444", activebackground=BG_DARK, activeforeground=ACCENT).pack(anchor="w", padx=5)
+
+    def run_prep(self):
+        enabled = [name for name, var in self.sys_toggles.items() if var.get()]
+        results = self.sys_mgr.run_prep(enabled)
+        self._refresh_sys_cache() 
+        messagebox.showinfo("Prep", "\n".join(results))
+        self.btn_prep.config(bg="#004400", text="✔ APPLIED")
+
+    def run_cleanup(self):
+        results = self.sys_mgr.run_cleanup()
+        self._refresh_sys_cache() 
+        messagebox.showinfo("Cleanup", "\n".join(results))
+        self.btn_prep.config(bg="#444400", text="⚠ APPLY")
+
+    def gen_report_now(self):
+        total_b = sum(b["total_size"] for b in self.jm.job_data["batches"])
+        txt, csv_path = self.reporter.generate(self.jm, total_b, 4, self.strat_var.get())
+        messagebox.showinfo("Report", f"Report Generated:\n{csv_path}")
+
+    def open_live_view(self):
+        self.update_telemetry(force=True)
+        webbrowser.open(self.live_html.html_path)
+
+    def refresh_slots(self, count):
+        for s in self.slots: s.destroy()
+        self.slots = []
+        self.slot_map = {} 
+        self.stream_speeds = {i: 0 for i in range(count)} 
+        for i in range(count):
+            sw = StreamWidget(self.scroll_area.scrollable_frame, i)
+            self.slots.append(sw)
+
+    def browse(self, v):
+        p = filedialog.askdirectory()
+        if p: v.set(p)
+    
+    def load_prev_job(self):
+        if self.jm.load_job():
+            self.src.set(self.jm.job_data["src"])
+            self.dst.set(self.jm.job_data["dst"])
+            self.bytes_transferred_start = self.jm.get_total_bytes_done()
+            self.bytes_transferred_session = 0
+            self.update_status("LOADED PREV JOB")
+            self.btn_run.config(state="normal")
+    
+    def run_scan(self):
+        if not self.src.get() or not self.dst.get(): return
+        self.btn_scan.config(bg="#444400", text="SCANNING...")
+        threading.Thread(target=self._scan_thread, daemon=True).start()
+    
+    def _scan_thread(self):
+        self.update_status("SCANNING...")
+        self.jm.create_new_job(self.src.get(), self.dst.get())
+        cfg = {'skip_temp': self.chk_skip_temp.get(), 'skip_appdata': self.chk_skip_app.get(), 'skip_windows': self.chk_skip_win.get()}
+        src_plug = self.pm.sources[0]
+        src_plug.scan_to_manifest(self.src.get(), self.jm, config=cfg)
+        count = len(self.jm.job_data["batches"])
+        self.update_status(f"SCAN COMPLETE. {count} BATCHES.")
+        self.root.after(0, lambda: self.btn_scan.config(bg="#222222", text="[ SCAN ]"))
+        self.root.after(0, lambda: self.btn_run.config(state="normal"))
+    
+    def run_job(self):
+        try: n_streams = int(self.stream_var.get())
+        except: n_streams = 8
+        if len(self.slots) != n_streams: self.refresh_slots(n_streams)
+        
+        self.bytes_transferred_session = 0
+        self.session_start_time = time.time()
+        self.jm.reset_flags()
+        self.last_calc_time = time.time()
+        self._refresh_sys_cache()
+        
+        self.btn_run.config(state="disabled")
+        self.btn_pause.config(state="normal", text="⏸")
+        self.btn_cancel.config(state="normal")
+        self.btn_report.config(state="normal")
+        self.btn_live.config(state="normal")
+        self.bb_logger.start(self.jm)
+        strat_name = self.strat_var.get()
+        selected_strat = next((s for s in self.pm.strategies if s.name == strat_name), None)
+        if selected_strat:
+            threading.Thread(target=self._exec_thread, args=(selected_strat, n_streams), daemon=True).start()
+
+    def pause_job(self):
+        if self.jm.pause_event.is_set():
+            self.jm.pause_event.clear()
+            self.btn_pause.config(text="▶")
+            self.update_status("PAUSED")
+            # SNAPSHOT
+            try: streams = int(self.stream_var.get())
+            except: streams = 8
+            sys_state = "Optimized" if self.btn_prep['text'] == "✔ APPLIED" else "Standard"
+            # We calculate approximate average before stopping
+            dur = time.time() - self.session_start_time
+            avg = (self.bytes_transferred_session/1048576)/dur if dur > 0 else 0
+            self.jm.snapshot_history(avg, streams, sys_state)
+            
+            self.update_telemetry(force=True) # IMMEDIATE UPDATE
+        else:
+            self.jm.pause_event.set()
+            self.btn_pause.config(text="⏸")
+            self.update_status("RESUMING...")
+            self.last_calc_time = time.time()
+            self.update_telemetry(force=True) # IMMEDIATE UPDATE
+            
+    def cancel_job(self):
+        self.jm.cancel_flag = True
+        self.jm.pause_event.set()
+        self.update_status("STOPPING...")
+        self.bb_logger.stop()
+        self.update_telemetry(force=True) # IMMEDIATE UPDATE
+
+    def _exec_thread(self, strat, streams):
+        self.update_status(f"RUNNING [{streams} THREADS]...")
+        cfg = {'streams': streams}
+        strat.execute_job(self.jm, self.pm.sources[0], self.pm.dests[0], self.callback, cfg)
+        self.bb_logger.stop()
+        if not self.jm.cancel_flag:
+            self.jm.finish_job()
+            self.root.after(0, lambda: messagebox.showinfo("SUCCESS", "JOB COMPLETE"))
+        self.root.after(0, self.reset_ui)
+
+    def reset_ui(self):
+        self.btn_run.config(state="normal")
+        self.btn_pause.config(state="disabled")
+        self.btn_cancel.config(state="disabled")
+        self.update_status("READY")
+        self.jm.cancel_flag = False
+
+    def callback(self, bid, evt, data):
+        self.root.after(0, self._ui_update, bid, evt, data)
+
+    def _ui_update(self, bid, evt, data):
+        if bid == "GLOBAL":
+            if evt == "init": 
+                self.total_job_bytes = data
+                self.pb_master["value"] = 0
+                if self.bytes_transferred_start > 0:
+                     pct = (self.bytes_transferred_start / self.total_job_bytes) * 100
+                     self.pb_master["value"] = pct
+            elif evt == "status": self.update_status(data)
+            elif evt == "bytes": 
+                self.bytes_transferred_session += data
+                current_total = self.bytes_transferred_start + self.bytes_transferred_session
+                if self.total_job_bytes > 0:
+                    pct = (current_total / self.total_job_bytes) * 100
+                    self.pb_master["value"] = pct
+            return
+
+        if evt == "progress":
+            self.update_telemetry(force=False)
+
+        if evt == "start":
+            for idx, slot in enumerate(self.slots):
+                if slot.curr_batch_id is None:
+                    slot.assign(bid, data["count"], data["size"])
+                    self.slot_map[bid] = idx
+                    break
+        elif evt == "progress":
+            idx = self.slot_map.get(bid)
+            if idx is not None: 
+                self.slots[idx].update_stats(data["bytes"], data["speed"])
+                self.stream_speeds[idx] = data["speed"]
+        elif evt == "done":
+            idx = self.slot_map.get(bid)
+            if idx is not None:
+                self.slots[idx].reset()
+                self.stream_speeds[idx] = 0
+                del self.slot_map[bid]
+
+    def update_telemetry(self, force=False):
+        now = time.time()
+        # V26: 10 SECOND HEARTBEAT (unless forced)
+        if not force and (now - self.last_calc_time < 10.0):
+            return 
+
+        delta_t = now - self.last_calc_time
+        if delta_t > 0:
+            self.inst_files_sec = (self.jm.session_files_done - self.last_files_count) / delta_t
+            self.inst_batches_sec = (self.jm.session_batches_done - self.last_batches_count) / delta_t
+        
+        # Reset ticker
+        self.last_calc_time = now
+        self.last_files_count = self.jm.session_files_done
+        self.last_batches_count = self.jm.session_batches_done
+        
+        duration = now - self.session_start_time
+        avg_speed = 0; avg_files = 0; avg_batches = 0
+        if duration > 0:
+            avg_speed = (self.bytes_transferred_session / 1048576) / duration
+            avg_files = self.jm.session_files_done / duration
+            avg_batches = self.jm.session_batches_done / duration
+        
+        run_status = "RUNNING"
+        if not self.jm.pause_event.is_set(): run_status = "PAUSED"
+        if self.jm.cancel_flag: run_status = "STOPPING"
+        if self.btn_run['state'] == 'normal': run_status = "IDLE"
+
+        stats = {
+            'inst_speed': sum(self.stream_speeds.values()) / 1048576,
+            'avg_speed': avg_speed,
+            'streams': self.stream_var.get(),
+            'sys_state': self.cached_sys_state,
+            'inst_files_sec': self.inst_files_sec,
+            'inst_batches_sec': self.inst_batches_sec,
+            'avg_files_sec': avg_files,
+            'avg_batches_sec': avg_batches,
+            'run_status': run_status
+        }
+        self.live_html.update(self.jm, stats)
+        
+        # V26: LOG TO CSV EVERY UPDATE
+        try:
+            file_exists = os.path.exists(self.csv_path)
+            with open(self.csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists: writer.writerow(["Timestamp", "Status", "Avg Speed (MB/s)", "Files/Sec", "Batches/Sec"])
+                writer.writerow([time.ctime(), run_status, f"{avg_speed:.2f}", f"{self.inst_files_sec:.1f}", f"{self.inst_batches_sec:.1f}"])
+        except: pass
