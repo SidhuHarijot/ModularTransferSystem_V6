@@ -1,0 +1,24 @@
+{
+  "environment": {
+    "rytime": "Python",
+    "version": "3.10",
+    "dependencies": [
+      "tkInter",
+      "json",
+      "logging",
+      "system",
+      "time",
+      "os"
+    ]
+  },
+  "repo_structure": {
+    "core": "core/",
+    "dashboard": "dashboard/",
+    "gui": "gui/",
+    "plugins": "plugins/"
+  },
+  "constraints": {
+    "max_type_size": 6400000,
+    "platform": "windows"
+  }
+}
