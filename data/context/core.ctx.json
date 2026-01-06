@@ -1,0 +1,14 @@
+{
+  "module": "core",
+  "purpose": "Core functionality for Modular Transfer System",
+  "config": {
+    "includes": ["filemaker.py", "transfer_config.json"],
+    "process_flow": "runtime"
+  },
+  "dependencies": [
+    "os",
+    "logging",
+    "json",
+    "time"
+  ]
+}
