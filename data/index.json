@@ -1,0 +1,9 @@
+{
+  "root": {
+    "context": "data/context/root.ctx.json",
+    "manifest": "data/manifest/repo.manifest.jsonl",
+    "spec": "data/specs/system.spec.md",
+    "updates": "data/updates/",
+    "index": "data/index.json"
+  }
+}

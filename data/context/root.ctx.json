@@ -1,24 +1,19 @@
 {
-  "environment": {
-    "rytime": "Python",
-    "version": "3.10",
-    "dependencies": [
-      "tkInter",
-      "json",
-      "logging",
-      "system",
-      "time",
-      "os"
-    ]
+  "scope": "root",
+  "environment": "development",
+  "repo": "SidhuHarijot/ModularTransferSystem_V6",
+  "branch": "beta",
+  "architecture": {
+    "modules": ["core", "dashboard", "gui", "plugins"],
+    "data_files": ["job_manifest.json", "transfer_config.json", "state_snapshot.json", "system_restore_state.json"]
   },
-  "repo_structure": {
-    "core": "core/",
-    "dashboard": "dashboard/",
-    "gui": "gui/",
-    "plugins": "plugins/"
-  },
+  "assumptions": [
+    "Python-based modular automation framework",
+    "Uses manifest-driven job configurations",
+    "State persistence managed via JSON"
+  ],
   "constraints": {
-    "max_type_size": 6400000,
-    "platform": "windows"
+    "max_file_size_mb": 100,
+    "manifest_sync": true
   }
 }
